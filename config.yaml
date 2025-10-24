@@ -1,0 +1,20 @@
+# Configuration for FastAPI Agent
+# Define multiple LLM servers and models to choose from
+
+servers:
+  - name: "Ollama Local"
+    url: "http://localhost:11434"
+    models:
+      - "mistral-7b"
+      - "llama2"
+      - "codellama"
+
+# API Server Configuration
+api:
+  host: "0.0.0.0"
+  port: 8000
+
+# LLM Generation Parameters
+generation:
+  temperature: 0.2
+  max_tokens: 2000

@@ -49,9 +49,6 @@ htmlcov/
 *.backup
 *.old
 
-# Temporary test files
-test_*.py
-
 # OS
 .DS_Store
 Thumbs.db

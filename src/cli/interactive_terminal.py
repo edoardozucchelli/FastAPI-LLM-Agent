@@ -9,6 +9,7 @@ from rich.table import Table
 from rich.prompt import IntPrompt, Prompt
 
 from src.core.config import config
+from src.core.logger import get_logger, log_command_execution
 from src.cli.input_handler import InputHandler
 from src.cli.command_executor import CommandExecutor
 from src.cli.command_parser import CommandParser, format_command_menu
@@ -22,6 +23,7 @@ from src.cli.expert_modes import (
 from src.core.tools import TOOLS
 
 console = Console()
+logger = get_logger(__name__)
 
 
 class InteractiveCLI:
@@ -29,6 +31,7 @@ class InteractiveCLI:
 
     def __init__(self, base_url: str = None, model: str = None):
         """Initialize the interactive CLI."""
+        logger.info("Initializing InteractiveCLI")
         self.input_handler = InputHandler()
         self.command_executor = CommandExecutor()
         self.command_parser = CommandParser()
@@ -36,6 +39,7 @@ class InteractiveCLI:
         self.llm_client = None
         self.base_url = base_url
         self.model = model
+        logger.debug(f"CLI initialized with base_url={base_url}, model={model}")
 
     def _select_server_and_model(self):
         """Interactive selection of server and model."""
@@ -146,19 +150,25 @@ class InteractiveCLI:
 
     async def run(self):
         """Run the interactive CLI."""
+        logger.info("Starting CLI run loop")
+
         # Startup: Server/Model selection
         if self.base_url and self.model:
             server_url = self.base_url
             model_name = self.model
+            logger.info(f"Using provided server: {server_url}, model: {model_name}")
         else:
             server, model_name = self._select_server_and_model()
             server_url = server.url
+            logger.info(f"User selected server: {server_url}, model: {model_name}")
 
         # Startup: Expert mode selection
         expert_mode = self._select_expert_mode()
+        logger.info(f"User selected expert mode: {expert_mode.value}")
 
         # Startup: Response mode selection
         response_mode = self._select_response_mode()
+        logger.info(f"User selected response mode: {response_mode.value}")
 
         # Initialize LLM client with selected modes
         self.llm_client = LLMClientWithTools(
@@ -213,21 +223,27 @@ class InteractiveCLI:
                         user_input = await self.input_handler.get_input("> ")
                     except EOFError:
                         # Ctrl+D - Exit gracefully
+                        logger.info("User exit via Ctrl+D")
                         console.print("\n[yellow]👋 Goodbye! (Ctrl+D)[/yellow]")
                         break
                     except KeyboardInterrupt:
                         # Ctrl+C at prompt - Show reminder
+                        logger.debug("User pressed Ctrl+C at prompt")
                         console.print("\n[yellow]Use !quit to exit[/yellow]")
                         continue
 
                     if not user_input:
                         continue
 
+                    logger.info(f"User input: {user_input[:100]}...")
+
                     # Handle special commands (start with !)
                     if user_input.startswith("!"):
+                        logger.debug(f"Processing special command: {user_input}")
                         if await self._handle_special_command(user_input):
                             continue
                         else:
+                            logger.info("User requested exit via special command")
                             break  # Exit requested
 
                     # Add user message to conversation
@@ -267,6 +283,7 @@ class InteractiveCLI:
                         await stream_task
                     except KeyboardInterrupt:
                         # User pressed Ctrl+C during streaming
+                        logger.info("User interrupted response with Ctrl+C")
                         self.llm_client.cancel_response()
                         stream_task.cancel()
                         try:
@@ -277,6 +294,7 @@ class InteractiveCLI:
                         was_cancelled = True
                     except Exception as e:
                         # Catch any other errors during streaming
+                        logger.error(f"Error during streaming: {e}", exc_info=True)
                         console.print(f"\n[red]Error during streaming: {e}[/red]")
                         was_cancelled = True
 
@@ -326,11 +344,13 @@ class InteractiveCLI:
 
         # Exit commands
         if cmd_lower in ["!quit", "!exit", "!q"]:
+            logger.info("User quit command")
             console.print("\n[yellow]👋 Goodbye![/yellow]")
             return False
 
         # Clear history
         elif cmd_lower == "!clear":
+            logger.info("User cleared conversation history")
             self.llm_client.clear_history()
             console.print("[yellow]✓ Conversation history cleared[/yellow]")
             return True
@@ -490,6 +510,7 @@ class InteractiveCLI:
             # Extract command after the !
             shell_cmd = command[1:].strip()  # Remove the ! prefix
             if shell_cmd:
+                logger.info(f"Executing direct shell command: {shell_cmd}")
                 console.print(f"[dim]$ {shell_cmd}[/dim]")
                 # Execute the command
                 import subprocess
@@ -501,15 +522,22 @@ class InteractiveCLI:
                         text=True,
                         timeout=30
                     )
+                    success = result.returncode == 0
+                    output = result.stdout if success else result.stderr
+                    log_command_execution(logger, shell_cmd, output, success)
+
                     if result.stdout:
                         console.print(result.stdout.rstrip())
                     if result.stderr:
                         console.print(f"[red]{result.stderr.rstrip()}[/red]")
                 except subprocess.TimeoutExpired:
+                    logger.error(f"Command timed out: {shell_cmd}")
                     console.print("[red]Command timed out (30s limit)[/red]")
                 except Exception as e:
+                    logger.error(f"Command execution error: {e}", exc_info=True)
                     console.print(f"[red]Error: {e}[/red]")
             else:
+                logger.warning("Empty shell command provided")
                 console.print("[red]Empty command[/red]")
             return True
 

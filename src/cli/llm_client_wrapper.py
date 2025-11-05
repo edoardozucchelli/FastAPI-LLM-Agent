@@ -6,12 +6,15 @@ from typing import AsyncGenerator, Dict, Any, List, Optional
 
 from src.core.llm_client import LLMClient
 from src.core.config import config
+from src.core.logger import get_logger
 from src.cli.expert_modes import (
     ExpertMode,
     ResponseMode,
     get_system_prompt,
     get_expert_config
 )
+
+logger = get_logger(__name__)
 
 
 class LLMClientWithTools:
@@ -35,7 +38,7 @@ class LLMClientWithTools:
             response_mode: Response detail mode (quick/full)
             tools: List of tool definitions
         """
-        self.base_client = LLMClient(base_url=base_url, model=model, use_instruct=False)
+        self.base_client = LLMClient(base_url=base_url, model=model, use_instruct=True)
         self.expert_mode = expert_mode
         self.response_mode = response_mode
         self.tools = tools
@@ -48,8 +51,12 @@ class LLMClientWithTools:
         # Generate system prompt
         self.system_prompt = get_system_prompt(expert_mode, response_mode)
 
+        logger.info(f"LLMClientWithTools initialized: expert_mode={expert_mode.value}, response_mode={response_mode.value}")
+        logger.debug(f"System prompt: {self.system_prompt[:200]}...")
+
     async def close(self):
         """Close the client."""
+        logger.info("Closing LLMClientWithTools")
         await self.base_client.close()
 
     def set_expert_mode(self, expert_mode: ExpertMode):
@@ -59,13 +66,17 @@ class LLMClientWithTools:
         Args:
             expert_mode: New expert mode
         """
+        logger.info(f"Changing expert mode from {self.expert_mode.value} to {expert_mode.value}")
         self.expert_mode = expert_mode
         self.config = get_expert_config(expert_mode, self.response_mode)
         self.system_prompt = get_system_prompt(expert_mode, self.response_mode)
 
+        logger.debug(f"New system prompt: {self.system_prompt[:200]}...")
+
         # Update system message in history if it exists
         if self.conversation_history and self.conversation_history[0]["role"] == "system":
             self.conversation_history[0]["content"] = self.system_prompt
+            logger.debug("Updated system message in conversation history")
 
     def set_response_mode(self, response_mode: ResponseMode):
         """
@@ -74,13 +85,17 @@ class LLMClientWithTools:
         Args:
             response_mode: New response mode (quick/full)
         """
+        logger.info(f"Changing response mode from {self.response_mode.value} to {response_mode.value}")
         self.response_mode = response_mode
         self.config = get_expert_config(self.expert_mode, response_mode)
         self.system_prompt = get_system_prompt(self.expert_mode, response_mode)
 
+        logger.debug(f"New config: temperature={self.config['temperature']}, max_tokens={self.config['max_tokens']}")
+
         # Update system message in history if it exists
         if self.conversation_history and self.conversation_history[0]["role"] == "system":
             self.conversation_history[0]["content"] = self.system_prompt
+            logger.debug("Updated system message in conversation history")
 
     def cancel_response(self):
         """Cancel ongoing response by stopping the underlying stream."""
@@ -98,17 +113,7 @@ class LLMClientWithTools:
 
     def add_user_message(self, content: str):
         """Add a user message to the conversation."""
-        # If this is the first user message, prepend a role reminder
-        # (helps with models that don't respect system prompts well)
-        is_first_user_message = not any(
-            msg["role"] == "user" for msg in self.conversation_history
-        )
-
-        if is_first_user_message:
-            # Add expert mode reminder in first message
-            expert_name = self.config.get("name", "").replace("🐧 ", "").replace("🐍 ", "").replace("🚀 ", "").replace("🗄️ ", "").replace("💬 ", "")
-            content = f"[You are {expert_name}] {content}"
-
+        logger.debug(f"Adding user message: {content[:200]}...")
         self.conversation_history.append({
             "role": "user",
             "content": content
@@ -116,6 +121,10 @@ class LLMClientWithTools:
 
     def add_assistant_message(self, content: str, tool_calls: Optional[List[Dict[str, Any]]] = None):
         """Add an assistant message to the conversation."""
+        logger.debug(f"Adding assistant message: {content[:200]}...")
+        if tool_calls:
+            logger.debug(f"With {len(tool_calls)} tool calls")
+
         message = {
             "role": "assistant",
             "content": content
@@ -242,6 +251,7 @@ class LLMClientWithTools:
 
     def clear_history(self):
         """Clear conversation history."""
+        logger.info(f"Clearing conversation history (had {len(self.conversation_history)} messages)")
         self.conversation_history = []
 
     def get_history_length(self) -> int:

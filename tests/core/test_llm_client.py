@@ -262,3 +262,161 @@ class TestLLMClientStreaming:
 
         assert len(chunks) == 1
         assert "Error communicating with LLM" in chunks[0]
+
+
+class TestSystemPromptFormatting:
+    """Tests for system prompt formatting in instruct mode."""
+
+    def test_system_prompt_included_in_instruct_format(self):
+        """Test that system prompt is properly included in instruct format."""
+        messages = [
+            {"role": "system", "content": "You are a helpful Linux expert."},
+            {"role": "user", "content": "Ciao, sono Edoardo"}
+        ]
+
+        # Format messages using new format
+        prompt_parts = []
+        system_prompt = None
+
+        # Extract system prompt
+        for msg in messages:
+            if msg["role"] == "system":
+                system_prompt = f"<<SYS>>\n{msg['content']}\n<</SYS>>"
+                break
+
+        # Build conversation
+        conversation_parts = []
+        for i, msg in enumerate(messages):
+            if msg["role"] == "user":
+                next_msg = messages[i + 1] if i + 1 < len(messages) else None
+                if next_msg and next_msg["role"] == "assistant":
+                    conversation_parts.append(f"[INST] {msg['content']} [/INST] {next_msg['content']}")
+                else:
+                    conversation_parts.append(f"[INST] {msg['content']} [/INST]")
+
+        if system_prompt:
+            prompt_parts.append(system_prompt)
+        if conversation_parts:
+            prompt_parts.append(" ".join(conversation_parts))
+
+        prompt = "\n\n".join(prompt_parts)
+
+        # Verify system prompt is included
+        assert "<<SYS>>" in prompt
+        assert "You are a helpful Linux expert." in prompt
+        assert "<</SYS>>" in prompt
+        assert "[INST] Ciao, sono Edoardo [/INST]" in prompt
+
+    def test_system_prompt_with_conversation_history(self):
+        """Test that system prompt is preserved with conversation history."""
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "First question"},
+            {"role": "assistant", "content": "First answer"},
+            {"role": "user", "content": "Second question"}
+        ]
+
+        # Format messages using new format
+        prompt_parts = []
+        system_prompt = None
+
+        # Extract system prompt
+        for msg in messages:
+            if msg["role"] == "system":
+                system_prompt = f"<<SYS>>\n{msg['content']}\n<</SYS>>"
+                break
+
+        # Build conversation
+        conversation_parts = []
+        for i, msg in enumerate(messages):
+            if msg["role"] == "user":
+                next_msg = messages[i + 1] if i + 1 < len(messages) else None
+                if next_msg and next_msg["role"] == "assistant":
+                    conversation_parts.append(f"[INST] {msg['content']} [/INST] {next_msg['content']}")
+                else:
+                    conversation_parts.append(f"[INST] {msg['content']} [/INST]")
+
+        if system_prompt:
+            prompt_parts.append(system_prompt)
+        if conversation_parts:
+            prompt_parts.append(" ".join(conversation_parts))
+
+        prompt = "\n\n".join(prompt_parts)
+
+        # Verify all parts are present
+        assert "<<SYS>>" in prompt
+        assert "You are a helpful assistant." in prompt
+        # Check that conversation is properly formatted
+        assert "[INST] First question [/INST] First answer" in prompt
+        assert "[INST] Second question [/INST]" in prompt
+
+    def test_only_user_message_without_system(self):
+        """Test formatting when only user message is present."""
+        messages = [
+            {"role": "user", "content": "Hello"}
+        ]
+
+        prompt_parts = []
+        system_prompt = None
+
+        # Extract system prompt
+        for msg in messages:
+            if msg["role"] == "system":
+                system_prompt = f"<<SYS>>\n{msg['content']}\n<</SYS>>"
+                break
+
+        # Build conversation
+        conversation_parts = []
+        for i, msg in enumerate(messages):
+            if msg["role"] == "user":
+                next_msg = messages[i + 1] if i + 1 < len(messages) else None
+                if next_msg and next_msg["role"] == "assistant":
+                    conversation_parts.append(f"[INST] {msg['content']} [/INST] {next_msg['content']}")
+                else:
+                    conversation_parts.append(f"[INST] {msg['content']} [/INST]")
+
+        if system_prompt:
+            prompt_parts.append(system_prompt)
+        if conversation_parts:
+            prompt_parts.append(" ".join(conversation_parts))
+
+        prompt = "\n\n".join(prompt_parts) if prompt_parts else " ".join(conversation_parts)
+
+        # Should only contain user message
+        assert prompt == "[INST] Hello [/INST]"
+        assert "<<SYS>>" not in prompt
+
+    @pytest.mark.asyncio
+    async def test_stream_generate_includes_system_prompt(self, llm_client_instruct, mock_httpx_client):
+        """Test that _stream_generate includes system prompt in the request."""
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+
+        async def mock_aiter_lines():
+            yield json.dumps({"response": "I am a Linux expert.", "done": False})
+            yield json.dumps({"response": "", "done": True})
+
+        mock_response.aiter_lines = mock_aiter_lines
+        mock_httpx_client.stream.return_value.__aenter__.return_value = mock_response
+
+        messages = [
+            {"role": "system", "content": "You are a Linux expert."},
+            {"role": "user", "content": "Who are you?"}
+        ]
+
+        chunks = []
+        async for chunk in llm_client_instruct.chat_stream(messages):
+            chunks.append(chunk)
+
+        # Verify the request was made
+        assert mock_httpx_client.stream.called
+
+        # Get the actual call arguments
+        call_args = mock_httpx_client.stream.call_args
+        payload = call_args.kwargs.get('json', {})
+
+        # Verify system prompt is in the formatted prompt
+        prompt = payload.get('prompt', '')
+        assert "<<SYS>>" in prompt
+        assert "You are a Linux expert." in prompt
+        assert "<</SYS>>" in prompt
